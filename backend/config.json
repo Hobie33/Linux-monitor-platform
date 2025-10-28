@@ -1,0 +1,9 @@
+{
+  "thresholds": {
+    "cpu": 80,
+    "mem": 80,
+    "disk": 90,
+    "net_recv": 100,
+    "net_sent": 100
+  }
+}

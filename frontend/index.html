@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Linux Monitor Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body{font-family:system-ui;margin:16px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+    .status{margin-bottom:12px}
+    .status .badge{display:inline-block;padding:4px 8px;border-radius:6px;background:#eee;margin-right:8px}
+    .badge.warn{background:#ffefef;color:#b00020}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #ddd;padding:6px;text-align:left;font-size:14px}
+    th{background:#f7f7f7}
+  </style>
+</head>
+<body>
+  <h2>Linux 系统实时资源监控</h2>
+  <div class="status">
+    <span id="badge-cpu" class="badge">CPU 正常</span>
+    <span id="badge-mem" class="badge">内存 正常</span>
+    <span id="badge-disk" class="badge">磁盘 正常</span>
+    <span id="badge-net" class="badge">网络 正常</span>
+  </div>
+  <div class="grid">
+    <canvas id="cpu"></canvas>
+    <canvas id="mem"></canvas>
+    <canvas id="disk"></canvas>
+    <canvas id="net"></canvas>
+  </div>
+
+  <script>
+    const API = 'http://127.0.0.1:8000'; // 部署到远端时替换为 http://<Linux_IP>:8000
+    async function fetchJSON(path){ const r=await fetch(`${API}${path}`); return r.json() }
+
+    const mk = (id,label) => new Chart(document.getElementById(id), {
+      type:'line', data:{labels:[], datasets:[{label, data:[], fill:false}]},
+      options:{animation:false, scales:{y:{beginAtZero:true}}}
+    });
+    const cCPU=mk('cpu','CPU %'), cMEM=mk('mem','Memory %'), cDISK=mk('disk','Disk %');
+    const cNET=new Chart(document.getElementById('net'), {
+      type:'line', data:{labels:[], datasets:[{label:'Recv Mbps',data:[],fill:false},{label:'Sent Mbps',data:[],fill:false}]},
+      options:{animation:false, scales:{y:{beginAtZero:true}}}
+    });
+
+    const badges = {
+      cpu: document.getElementById('badge-cpu'),
+      mem: document.getElementById('badge-mem'),
+      disk: document.getElementById('badge-disk'),
+      net: document.getElementById('badge-net')
+    };
+    const setBadge = (el, ok, label) => {
+      el.textContent = label + (ok ? ' 正常' : ' 告警');
+      el.className = 'badge' + (ok ? '' : ' warn');
+    };
+
+    let CONFIG = null;
+    async function refreshConfig(){ try{ CONFIG = await fetchJSON('/api/config') }catch(e){ console.error(e) } }
+
+    async function refreshData(){
+      try{
+        const d = await fetchJSON('/api/data'); const h=d.history; const latest=d.latest || {};
+        cCPU.data.labels=h.ts; cCPU.data.datasets[0].data=h.cpu; cCPU.update();
+        cMEM.data.labels=h.ts; cMEM.data.datasets[0].data=h.mem; cMEM.update();
+        cDISK.data.labels=h.ts; cDISK.data.datasets[0].data=h.disk; cDISK.update();
+        cNET.data.labels=h.ts; cNET.data.datasets[0].data=h.net_recv; cNET.data.datasets[1].data=h.net_sent; cNET.update();
+        if(CONFIG && CONFIG.thresholds){
+          const t = CONFIG.thresholds;
+          setBadge(badges.cpu, latest.cpu <= t.cpu, 'CPU');
+          setBadge(badges.mem, latest.mem <= t.mem, '内存');
+          setBadge(badges.disk, latest.disk <= t.disk, '磁盘');
+          const netok = (latest.net_recv || 0) <= t.net_recv && (latest.net_sent || 0) <= t.net_sent;
+          setBadge(badges.net, netok, '网络');
+        }
+      }catch(e){ console.error(e) }
+    }
+
+    async function loop(){
+      await refreshData();
+      setTimeout(loop, 1000);
+    }
+
+    (async function init(){
+      await refreshConfig();
+      loop();
+    })();
+  </script>
+</body>
+</html>
