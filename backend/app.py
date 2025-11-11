@@ -13,6 +13,10 @@ app.add_middleware(
 HIST = {"ts": deque(maxlen=100), "cpu": deque(maxlen=100),
         "mem": deque(maxlen=100), "disk": deque(maxlen=100),
         "net_recv": deque(maxlen=100), "net_sent": deque(maxlen=100)}
+EVENTS = deque(maxlen=200)
+LAST_ALERT_AT = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "net_recv": 0.0, "net_sent": 0.0}
+START_AT = time.time()
+LAST_SAMPLE_AT = 0.0
 
 # 使用 /proc 统计网络字节，避免平台差异
 _last_t = time.time()
@@ -96,6 +100,37 @@ async def sampler():
         HIST["net_recv"].append(recv_mbps)
         HIST["net_sent"].append(sent_mbps)
 
+        # 记录采样时间
+        global LAST_SAMPLE_AT
+        LAST_SAMPLE_AT = time.time()
+
+        # 简易告警事件（冷却期避免刷屏）
+        try:
+            thresholds = CONFIG.get("thresholds", {})
+            cooldown = CONFIG.get("alerts", {}).get("cooldown_sec", 30)
+            now_ts = datetime.now().isoformat(timespec='seconds')
+            for key, val in {
+                "cpu": cpu, "mem": mem, "disk": disk,
+                "net_recv": recv_mbps, "net_sent": sent_mbps
+            }.items():
+                th = thresholds.get(key)
+                if th is None:
+                    continue
+                if val is not None and val > th:
+                    if time.time() - LAST_ALERT_AT.get(key, 0.0) > cooldown:
+                        EVENTS.append({
+                            "ts": now_ts,
+                            "level": "WARN",
+                            "type": "threshold_exceeded",
+                            "metric": key,
+                            "value": round(float(val), 2),
+                            "threshold": th,
+                            "message": f"{key} > {th}"
+                        })
+                        LAST_ALERT_AT[key] = time.time()
+        except Exception:
+            pass
+
         await asyncio.sleep(1)
 
 @app.on_event("startup")
@@ -119,3 +154,77 @@ def data():
 @app.get("/api/config")
 def get_config():
     return CONFIG
+
+
+@app.get("/api/top")
+def api_top(count: int = 10, by: str = "cpu"):
+    """
+    按需计算 Top-N 进程，默认按 CPU% 排序；也支持按内存排序（by=mem）。
+    为减少开销，CPU 使用非阻塞的即时采样（interval=None），首次调用可能为 0，后续更准确。
+    """
+    items = []
+    try:
+        for p in psutil.process_iter(["pid", "name", "username", "memory_percent"]):
+            try:
+                info = p.info
+                cpu = p.cpu_percent(interval=None)  # 非阻塞即时值
+                mem = info.get("memory_percent") or 0.0
+                items.append({
+                    "pid": info.get("pid"),
+                    "name": info.get("name") or "",
+                    "user": info.get("username") or "",
+                    "cpu": round(cpu or 0.0, 1),
+                    "mem": round(mem, 1)
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            except Exception:
+                continue
+    except Exception:
+        items = []
+
+    key = "cpu" if by == "cpu" else "mem"
+    items.sort(key=lambda x: x.get(key, 0.0), reverse=True)
+    return {"top": items[:max(1, count)], "by": key, "count": count}
+
+
+@app.get("/api/metrics")
+def api_metrics():
+    def stats(arr):
+        if not arr:
+            return {"count": 0, "avg": None, "max": None}
+        vals = list(arr)
+        return {
+            "count": len(vals),
+            "avg": round(sum(vals)/len(vals), 2),
+            "max": round(max(vals), 2)
+        }
+    return {
+        "window_sec": len(HIST["ts"]),
+        "cpu": stats(HIST["cpu"]),
+        "mem": stats(HIST["mem"]),
+        "disk": stats(HIST["disk"]),
+        "net_recv": stats(HIST["net_recv"]),
+        "net_sent": stats(HIST["net_sent"])
+    }
+
+
+@app.get("/api/events")
+def api_events(limit: int = 50):
+    # 返回最近的事件（倒序）
+    data = list(EVENTS)[-limit:]
+    return {"events": data[::-1], "count": len(data)}
+
+
+@app.get("/api/health")
+def api_health():
+    now = time.time()
+    age = None if LAST_SAMPLE_AT == 0 else round(now - LAST_SAMPLE_AT, 2)
+    uptime = round(now - START_AT, 1)
+    status = "ok" if age is not None and age < 3.0 else "degraded" if age is not None else "init"
+    return {
+        "status": status,
+        "sampler_last_age_sec": age,
+        "backend_uptime_sec": uptime,
+        "events_buffer": {"size": len(EVENTS), "capacity": EVENTS.maxlen}
+    }
