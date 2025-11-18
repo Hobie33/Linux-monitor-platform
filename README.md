@@ -34,13 +34,31 @@ python3 -m http.server 8080
 如后端端口非 8000，请将 `frontend/index.html` 中的后端地址 `API_BASE` 调整为对应端口。
 
 ### 一键命令（Makefile）
-在项目根目录提供 Makefile，常用目标：
+在项目根目录提供 Makefile，一键运行与常用维护：
 ```bash
+# 初始化并启动（创建虚拟环境、安装依赖、启动后端与前端）
+make up
+
+# 停止服务 / 重启
+make down
+make restart
+
+# 安装与运行（单独使用）
 make venv        # 创建后端虚拟环境
 make install     # 安装后端依赖
 make start       # 启动后端与前端（后台运行，日志写入 .run/）
-make status      # 查看后台进程状态
 make stop        # 停止后端与前端
+
+# 诊断与信息
+make status      # 查看后台进程与健康状态
+make urls        # 显示访问地址（后端/前端）
+make logs        # 查看最近日志（后端/前端）
+make backend-log # 查看后端日志（最后 100 行）
+make frontend-log# 查看前端日志（最后 100 行）
+make health      # 打印后端健康接口
+make demo        # 快速演示各 API 输出
+
+# 清理
 make clean       # 清理 .run/、__pycache__、*.pyc
 ```
 运行产物与日志位于 `.run/`（已加入 `.gitignore`）。
@@ -56,27 +74,28 @@ make clean       # 清理 .run/、__pycache__、*.pyc
 - 跨域：直接用 `file://` 打开 HTML 可能被策略拦截，建议启用本地静态服务。
 - 端口占用：若 `8000` 被占用，可改 `--port 9000`，并同步调整前端的后端地址。
 
-## 任务进度（基于目标汇总）
-1) 搭建开发与运行环境
-- 状态：部分完成。
-- 已完成：Ubuntu/Python3 环境、FastAPI 后端与 Chart.js 前端可运行；Git 仓库与远端已配置；提供虚拟环境与依赖安装指引，基础 Makefile/脚本（start/stop/clean）。
-- 未完成：`gcc/iptables/tc` 的工具链配置（非本项目核心，后续按需补充）。
+## 功能说明
+- 后端 FastAPI 提供接口：
+  - `GET /api/data` 最新与历史指标
+  - `GET /api/top` 进程 Top-N
+  - `GET /api/metrics` 统计窗口值
+  - `GET /api/events` 最近事件列表
+  - `GET /api/events/stream` SSE 实时事件流
+  - `GET /api/config` 当前阈值/规则配置
+  - `GET /api/rules` 规则列表
+  - `GET /api/health` 健康状态
+- 前端页面：
+  - 概览：CPU/内存/磁盘/网络图表与阈值卡片
+  - 进程：Top-N 表格
+  - 规则：规则表格（徽章样式、阈值格式化）
+  - 事件流：SSE 实时事件，支持级别/类型/关键字筛选与暂停流控
 
-2) 系统指标采集器（Collector）
-- 状态：部分完成。
-- 已完成：基于 psutil 的主机级 CPU/内存/磁盘/网络采集；1s 周期采样与数据缓存；`/api/data` 提供实时数据。
-- 部分完成：进程级 Top-N（`/api/top` 即时采样，前端页面已接入）；持续采样与更细粒度指标待完善。
+如后端端口非 8000，请在 `frontend/index.html` 调整常量 `API_BASE`。
 
-3) 规则引擎（Alerting Engine）
-- 状态：未实现。
-- 规划：阈值比较、滑动窗口与“连续 N 次触发”抖动抑制；按用户/进程/正则选择器与白名单/冷却期。
-- 现状：前端仅依据 `config.json` 的阈值进行基础徽章着色，不含后端规则引擎与事件生成。
-
-4) 接口与可视化
-- 状态：部分完成。
-- 已完成：`/api/data`、`/api/config`、`/api/top`、`/api/metrics`、`/api/events`、`/api/health`（最小实现）；前端两页面：系统概览（曲线+卡片+tooltip）与进程 Top-N（滚动表格）。
-- 未完成：事件流（SSE/WS）、路由高亮与状态灯（结合 `/api/health`）。
-
-5) 制定性能与可靠性评估方案
-- 状态：未实现。
-- 规划：采样开销与后端 CPU/内存占用评估；高负载下的响应稳定性；前端刷新频率与资源占用；接口错误与降级策略。
+### 正确停止与诊断
+- 使用 `make down` 或 `make stop` 停止后端与前端（后台进程）
+- 若端口仍被占用，可运行：
+  - `make status` 查看进程与端口占用（含 8000/8080）
+  - `pgrep -fa 'uvicorn|http.server'` 检查残留进程
+  - `ss -lntp | awk 'NR==1 || /:(8000|8080)\b/'` 检查端口占用
+- 前端页面在 `http://127.0.0.1:8080` 打开时，即使后端停止，也会继续显示历史曲线；但卡片与表格会停止更新，事件流显示“未连接”。
