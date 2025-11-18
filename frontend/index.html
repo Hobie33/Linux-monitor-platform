@@ -47,7 +47,6 @@
 <body>
     <div class="sidebar">
         <h2>系统监控</h2>
-        <div style="padding:0 20px 10px 20px"><span class="status-chip" id="healthChip">后端 未连接</span></div>
         <a class="nav-item active" onclick="showPage('overview')">系统概览</a>
         <a class="nav-item" onclick="showPage('processes')">进程 Top-N</a>
         <a class="nav-item" onclick="showPage('rules')">规则</a>
@@ -96,34 +95,6 @@
                 <div class="chart-container">
                     <h3>网络流量 (Mbps)</h3>
                     <canvas id="networkChart" width="400" height="200"></canvas>
-                </div>
-            </div>
-
-            <div class="card" style="margin-top:10px">
-                <div class="controls" style="justify-content:space-between">
-                    <div style="display:flex;gap:10px;align-items:center">
-                        <span class="status-chip" id="overviewEventsSummary">事件：加载中...</span>
-                    </div>
-                    <div>
-                        <button onclick="exportOverviewEventsCSV()">导出CSV</button>
-                    </div>
-                </div>
-                <div class="table-wrapper">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>时间</th>
-                                <th>级别</th>
-                                <th>类型</th>
-                                <th>规则</th>
-                                <th>消息</th>
-                                <th>源</th>
-                            </tr>
-                        </thead>
-                        <tbody id="overviewEventsBody">
-                            <tr><td colspan="6">加载中...</td></tr>
-                        </tbody>
-                    </table>
                 </div>
             </div>
         </div>
@@ -223,8 +194,6 @@
     let thresholds = {};
     let sse = null;
     let eventsList = [];
-    let overviewEvents = [];
-    let healthStatus = {status: 'init'};
     let eventFilter = { level: 'all', type: 'all', text: '' };
     let streamPaused = false;
 
@@ -707,118 +676,26 @@
      }
 
      // 初始化
-    async function init() {
-        await loadConfig();
-        initCharts();
-        
-        setInterval(() => {
-            if (currentPage === 'overview') {
-                fetchData();
-            } else if (currentPage === 'processes') {
-                refreshTop();
-            }
-        }, 1000);
-        setInterval(() => { updateHealth(); }, 5000);
-        setInterval(() => { if (currentPage === 'overview') { fetchOverviewEvents(); } }, 2000);
-        
-        fetchData();
-        updateHealth();
-        fetchOverviewEvents();
-        refreshTop();
-    }
+     async function init() {
+         await loadConfig();
+         initCharts();
+         
+         // 定时刷新
+         setInterval(() => {
+             if (currentPage === 'overview') {
+                 fetchData();
+             } else if (currentPage === 'processes') {
+                 refreshTop();
+             }
+         }, 1000);
+         
+         // 立即获取一次数据
+         fetchData();
+         refreshTop();
+     }
 
     // 页面加载完成后初始化
     document.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
 </html>
-    async function updateHealth() {
-        try {
-            const r = await fetch(`${API_BASE}/api/health`);
-            const h = await r.json();
-            healthStatus = h;
-            const el = document.getElementById('healthChip');
-            let txt = '后端 ' + (h.status || '未知');
-            el.textContent = txt;
-            if (h.status === 'ok') { el.style.background = '#eaf9ef'; el.style.color = '#27ae60'; }
-            else if (h.status === 'degraded') { el.style.background = '#fff3e0'; el.style.color = '#f39c12'; }
-            else { el.style.background = '#eee'; el.style.color = '#666'; }
-        } catch {}
-    }
-
-    async function fetchOverviewEvents() {
-        try {
-            const r = await fetch(`${API_BASE}/api/events?limit=20`);
-            const d = await r.json();
-            overviewEvents = d.events || [];
-            renderOverviewEvents();
-        } catch {
-            const b = document.getElementById('overviewEventsBody');
-            b.innerHTML = '<tr><td colspan="6">加载失败</td></tr>';
-            const s = document.getElementById('overviewEventsSummary');
-            s.textContent = '事件：加载失败';
-        }
-    }
-
-    function renderOverviewEvents() {
-        const tbody = document.getElementById('overviewEventsBody');
-        tbody.innerHTML = '';
-        const s = document.getElementById('overviewEventsSummary');
-        s.textContent = `事件：${overviewEvents.length} 条`;
-        const list = overviewEvents.slice(0, 10);
-        if (list.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6">暂无事件</td></tr>';
-            return;
-        }
-        list.forEach(evt => {
-            const row = tbody.insertRow();
-            const ts = evt.timestamp || '';
-            const level = evt.level || '';
-            const type = evt.type || '';
-            const ruleName = evt.rule && evt.rule.name ? evt.rule.name : '';
-            const msg = evt.message || '';
-            const src = evt.source ? summarizeSource(evt.source) : '';
-            if (level === 'critical') row.className = 'row-critical';
-            else if (level === 'warning') row.className = 'row-warning';
-            row.insertCell(0).textContent = ts;
-            const lv = row.insertCell(1);
-            const badge = document.createElement('span');
-            badge.className = 'badge ' + (level === 'critical' ? 'badge-critical' : (level === 'warning' ? 'badge-warning' : 'badge-ok'));
-            badge.textContent = level || 'info';
-            lv.appendChild(badge);
-            row.insertCell(2).textContent = type;
-            row.insertCell(3).textContent = ruleName;
-            row.insertCell(4).textContent = msg;
-            row.insertCell(5).textContent = src;
-        });
-    }
-
-    function csvEscape(x) {
-        const s = String(x ?? '');
-        if (/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
-        return s;
-    }
-
-    function exportOverviewEventsCSV() {
-        const rows = [['时间','级别','类型','规则','消息','源']];
-        overviewEvents.forEach(evt => {
-            rows.push([
-                evt.timestamp || '',
-                evt.level || '',
-                evt.type || '',
-                (evt.rule && evt.rule.name) ? evt.rule.name : '',
-                evt.message || '',
-                evt.source ? summarizeSource(evt.source) : ''
-            ]);
-        });
-        const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
-        const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'events.csv';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }

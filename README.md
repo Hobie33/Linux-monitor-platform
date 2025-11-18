@@ -34,36 +34,34 @@ python3 -m http.server 8080
 如后端端口非 8000，请将 `frontend/index.html` 中的后端地址 `API_BASE` 调整为对应端口。
 
 ### 一键命令（Makefile）
-根目录提供增强的 Makefile（支持端口自定义与快捷操作）：
+在项目根目录提供 Makefile，一键运行与常用维护：
 ```bash
-# 初始化
-make venv                     # 创建后端虚拟环境 backend/venv
-make install                  # 安装后端依赖
+# 初始化并启动（创建虚拟环境、安装依赖、启动后端与前端）
+make up
 
-# 启停与状态
-make start                    # 后端 + 前端 后台启动（日志写入 .run/）
-make status                   # 查看后台进程状态
-make stop                     # 停止后端与前端
-make restart                  # 重启
-make up                       # 安装 + 启动（首次推荐）
-make down                     # 停止（别名）
+# 停止服务 / 重启
+make down
+make restart
 
-# 日志与健康
-make logs                     # 查看两端最新 50 行日志
-make logs-backend             # 查看后端 100 行日志
-make logs-frontend            # 查看前端 100 行日志
-make health                   # 调用 /api/health 查看后端健康
-make urls                     # 输出前后端访问地址
+# 安装与运行（单独使用）
+make venv        # 创建后端虚拟环境
+make install     # 安装后端依赖
+make start       # 启动后端与前端（后台运行，日志写入 .run/）
+make stop        # 停止后端与前端
+
+# 诊断与信息
+make status      # 查看后台进程与健康状态
+make urls        # 显示访问地址（后端/前端）
+make logs        # 查看最近日志（后端/前端）
+make backend-log # 查看后端日志（最后 100 行）
+make frontend-log# 查看前端日志（最后 100 行）
+make health      # 打印后端健康接口
+make demo        # 快速演示各 API 输出
 
 # 清理
-make clean                    # 清理 .run/、__pycache__、*.pyc
+make clean       # 清理 .run/、__pycache__、*.pyc
 ```
-
-支持环境变量：
-```bash
-BACKEND_HOST=127.0.0.1 BACKEND_PORT=8000 FRONTEND_PORT=8080 make start
-```
-默认端口：后端 `8000`、前端 `8080`。运行产物与日志位于 `.run/`（已加入 `.gitignore`）。
+运行产物与日志位于 `.run/`（已加入 `.gitignore`）。
 
 ## 验证
 - 前端页面显示 CPU、内存、磁盘、网络 4 张实时曲线（每秒更新）。
@@ -76,31 +74,28 @@ BACKEND_HOST=127.0.0.1 BACKEND_PORT=8000 FRONTEND_PORT=8080 make start
 - 跨域：直接用 `file://` 打开 HTML 可能被策略拦截，建议启用本地静态服务。
 - 端口占用：若 `8000` 被占用，可改 `--port 9000`，并同步调整前端的后端地址。
 
-## 任务进度（基于目标汇总）
-1) 搭建开发与运行环境
-- 状态：部分完成。
-- 已完成：Ubuntu/Python3 环境、FastAPI 后端与 Chart.js 前端可运行；Git 仓库与远端已配置；提供虚拟环境与依赖安装指引，基础 Makefile/脚本（start/stop/clean）。
-- 未完成：`gcc/iptables/tc` 的工具链配置（非本项目核心，后续按需补充）。
-
-2) 系统指标采集器（Collector）
-- 状态：部分完成。
-- 已完成：基于 psutil 的主机级 CPU/内存/磁盘/网络采集；1s 周期采样与数据缓存；`/api/data` 提供实时数据。
-- 部分完成：进程级 Top-N（`/api/top` 即时采样，前端页面已接入）；持续采样与更细粒度指标待完善。
-
-3) 规则引擎（Alerting Engine）
-- 状态：已实现最小版本。
-- 已完成：加载 `config.rules` 或根据 `config.thresholds` 自动生成规则；支持比较符（`>`/`<`）、级别（warning/critical）、连续触发与冷却期；触发时生成契约事件（`version: v1`）。
-- 接口：`/api/rules` 返回当前规则；`/api/events` 最近事件；`/api/events/stream` SSE 实时事件。
-
-4) 接口与可视化
-- 状态：已增强。
-- 已完成：`/api/data`（实时与历史）、`/api/config`、`/api/top`、`/api/metrics`、`/api/events`（最近事件）、`/api/health`（健康）、`/api/rules`（规则），以及事件流 SSE。
+## 功能说明
+- 后端 FastAPI 提供接口：
+  - `GET /api/data` 最新与历史指标
+  - `GET /api/top` 进程 Top-N
+  - `GET /api/metrics` 统计窗口值
+  - `GET /api/events` 最近事件列表
+  - `GET /api/events/stream` SSE 实时事件流
+  - `GET /api/config` 当前阈值/规则配置
+  - `GET /api/rules` 规则列表
+  - `GET /api/health` 健康状态
 - 前端页面：
-  - 系统概览：曲线、阈值卡片、侧栏健康状态、事件摘要与导出 CSV
-  - 进程 Top-N：滚动表格，按 CPU 排序
-  - 规则：当前规则表格展示
-  - 事件流：SSE 实时事件、筛选（级别/类型/关键字）、暂停/继续
+  - 概览：CPU/内存/磁盘/网络图表与阈值卡片
+  - 进程：Top-N 表格
+  - 规则：规则表格（徽章样式、阈值格式化）
+  - 事件流：SSE 实时事件，支持级别/类型/关键字筛选与暂停流控
 
-5) 制定性能与可靠性评估方案
-- 状态：未实现。
-- 规划：采样开销与后端 CPU/内存占用评估；高负载下的响应稳定性；前端刷新频率与资源占用；接口错误与降级策略。
+如后端端口非 8000，请在 `frontend/index.html` 调整常量 `API_BASE`。
+
+### 正确停止与诊断
+- 使用 `make down` 或 `make stop` 停止后端与前端（后台进程）
+- 若端口仍被占用，可运行：
+  - `make status` 查看进程与端口占用（含 8000/8080）
+  - `pgrep -fa 'uvicorn|http.server'` 检查残留进程
+  - `ss -lntp | awk 'NR==1 || /:(8000|8080)\b/'` 检查端口占用
+- 前端页面在 `http://127.0.0.1:8080` 打开时，即使后端停止，也会继续显示历史曲线；但卡片与表格会停止更新，事件流显示“未连接”。
