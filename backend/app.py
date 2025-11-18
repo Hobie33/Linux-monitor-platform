@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import psutil, asyncio, time, json, os, platform
 from collections import deque
 from datetime import datetime
+from typing import Optional
+from rules_engine import RulesEngine
 
 app = FastAPI(title="Linux Monitor", version="0.2")
 app.add_middleware(
@@ -24,6 +26,7 @@ _last_net = {"recv": 0, "sent": 0}
 
 CONFIG = {"thresholds": {"cpu": 80, "mem": 80, "disk": 90, "net_recv": 100, "net_sent": 100}}
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+RULES: Optional[RulesEngine] = None
 
 def read_net_bytes():
     # Linux 使用 /proc/net/dev；其他平台回退到 psutil
@@ -104,30 +107,13 @@ async def sampler():
         global LAST_SAMPLE_AT
         LAST_SAMPLE_AT = time.time()
 
-        # 简易告警事件（冷却期避免刷屏）
+        # 规则引擎评估（兼容 thresholds）
         try:
-            thresholds = CONFIG.get("thresholds", {})
-            cooldown = CONFIG.get("alerts", {}).get("cooldown_sec", 30)
-            now_ts = datetime.now().isoformat(timespec='seconds')
-            for key, val in {
-                "cpu": cpu, "mem": mem, "disk": disk,
-                "net_recv": recv_mbps, "net_sent": sent_mbps
-            }.items():
-                th = thresholds.get(key)
-                if th is None:
-                    continue
-                if val is not None and val > th:
-                    if time.time() - LAST_ALERT_AT.get(key, 0.0) > cooldown:
-                        EVENTS.append({
-                            "ts": now_ts,
-                            "level": "WARN",
-                            "type": "threshold_exceeded",
-                            "metric": key,
-                            "value": round(float(val), 2),
-                            "threshold": th,
-                            "message": f"{key} > {th}"
-                        })
-                        LAST_ALERT_AT[key] = time.time()
+            if RULES is not None:
+                RULES.evaluate({
+                    "cpu": cpu, "mem": mem, "disk": disk,
+                    "net_recv": recv_mbps, "net_sent": sent_mbps
+                })
         except Exception:
             pass
 
@@ -142,6 +128,25 @@ async def boot():
                 CONFIG.update(json.load(f))
     except Exception:
         pass
+    
+    # 初始化规则引擎与启动事件
+    def _publish(evt):
+        EVENTS.append(evt)
+
+    global RULES
+    try:
+        RULES = RulesEngine(CONFIG, publish_fn=_publish)
+        EVENTS.append({
+            "id": os.urandom(16).hex(),
+            "timestamp": datetime.utcnow().isoformat(timespec='milliseconds') + "Z",
+            "level": "info",
+            "type": "backend_start",
+            "message": "backend service started",
+            "source": {"service": "backend"},
+            "version": "v1"
+        })
+    except Exception:
+        RULES = None
     asyncio.create_task(sampler())
 
 @app.get("/api/data")
@@ -214,6 +219,36 @@ def api_events(limit: int = 50):
     # 返回最近的事件（倒序）
     data = list(EVENTS)[-limit:]
     return {"events": data[::-1], "count": len(data)}
+
+
+@app.get("/api/events/stream")
+async def api_events_stream():
+    """符合事件契约的 SSE 端点：GET /api/events/stream"""
+    from fastapi.responses import StreamingResponse
+
+    async def event_generator():
+        idx = 0
+        while True:
+            await asyncio.sleep(0.5)
+            snapshot = list(EVENTS)
+            if idx < len(snapshot):
+                for evt in snapshot[idx:]:
+                    yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                idx = len(snapshot)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "text/event-stream",
+    }
+    return StreamingResponse(event_generator(), headers=headers)
+
+
+@app.get("/api/rules")
+def api_rules():
+    if RULES is None:
+        return {"rules": []}
+    return RULES.to_dict()
 
 
 @app.get("/api/health")
