@@ -34,16 +34,36 @@ python3 -m http.server 8080
 如后端端口非 8000，请将 `frontend/index.html` 中的后端地址 `API_BASE` 调整为对应端口。
 
 ### 一键命令（Makefile）
-在项目根目录提供 Makefile，常用目标：
+根目录提供增强的 Makefile（支持端口自定义与快捷操作）：
 ```bash
-make venv        # 创建后端虚拟环境
-make install     # 安装后端依赖
-make start       # 启动后端与前端（后台运行，日志写入 .run/）
-make status      # 查看后台进程状态
-make stop        # 停止后端与前端
-make clean       # 清理 .run/、__pycache__、*.pyc
+# 初始化
+make venv                     # 创建后端虚拟环境 backend/venv
+make install                  # 安装后端依赖
+
+# 启停与状态
+make start                    # 后端 + 前端 后台启动（日志写入 .run/）
+make status                   # 查看后台进程状态
+make stop                     # 停止后端与前端
+make restart                  # 重启
+make up                       # 安装 + 启动（首次推荐）
+make down                     # 停止（别名）
+
+# 日志与健康
+make logs                     # 查看两端最新 50 行日志
+make logs-backend             # 查看后端 100 行日志
+make logs-frontend            # 查看前端 100 行日志
+make health                   # 调用 /api/health 查看后端健康
+make urls                     # 输出前后端访问地址
+
+# 清理
+make clean                    # 清理 .run/、__pycache__、*.pyc
 ```
-运行产物与日志位于 `.run/`（已加入 `.gitignore`）。
+
+支持环境变量：
+```bash
+BACKEND_HOST=127.0.0.1 BACKEND_PORT=8000 FRONTEND_PORT=8080 make start
+```
+默认端口：后端 `8000`、前端 `8080`。运行产物与日志位于 `.run/`（已加入 `.gitignore`）。
 
 ## 验证
 - 前端页面显示 CPU、内存、磁盘、网络 4 张实时曲线（每秒更新）。
@@ -68,14 +88,18 @@ make clean       # 清理 .run/、__pycache__、*.pyc
 - 部分完成：进程级 Top-N（`/api/top` 即时采样，前端页面已接入）；持续采样与更细粒度指标待完善。
 
 3) 规则引擎（Alerting Engine）
-- 状态：未实现。
-- 规划：阈值比较、滑动窗口与“连续 N 次触发”抖动抑制；按用户/进程/正则选择器与白名单/冷却期。
-- 现状：前端仅依据 `config.json` 的阈值进行基础徽章着色，不含后端规则引擎与事件生成。
+- 状态：已实现最小版本。
+- 已完成：加载 `config.rules` 或根据 `config.thresholds` 自动生成规则；支持比较符（`>`/`<`）、级别（warning/critical）、连续触发与冷却期；触发时生成契约事件（`version: v1`）。
+- 接口：`/api/rules` 返回当前规则；`/api/events` 最近事件；`/api/events/stream` SSE 实时事件。
 
 4) 接口与可视化
-- 状态：部分完成。
-- 已完成：`/api/data`、`/api/config`、`/api/top`、`/api/metrics`、`/api/events`、`/api/health`（最小实现）；前端两页面：系统概览（曲线+卡片+tooltip）与进程 Top-N（滚动表格）。
-- 未完成：事件流（SSE/WS）、路由高亮与状态灯（结合 `/api/health`）。
+- 状态：已增强。
+- 已完成：`/api/data`（实时与历史）、`/api/config`、`/api/top`、`/api/metrics`、`/api/events`（最近事件）、`/api/health`（健康）、`/api/rules`（规则），以及事件流 SSE。
+- 前端页面：
+  - 系统概览：曲线、阈值卡片、侧栏健康状态、事件摘要与导出 CSV
+  - 进程 Top-N：滚动表格，按 CPU 排序
+  - 规则：当前规则表格展示
+  - 事件流：SSE 实时事件、筛选（级别/类型/关键字）、暂停/继续
 
 5) 制定性能与可靠性评估方案
 - 状态：未实现。
